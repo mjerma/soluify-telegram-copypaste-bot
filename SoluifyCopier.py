@@ -1,12 +1,3 @@
-# ==============================================================================
-# Soluify  |  Your #1 IT Problem Solver  |  {telegram-copypaste-bot v1.0}
-# ==============================================================================
-#  __         _   
-# (_  _ |   .(_   
-# __)(_)||_||| \/ 
-#              /
-# © 2024 Soluify LLC
-# ------------------------------------------------------------------------------
 import asyncio
 import random
 import re
@@ -203,12 +194,12 @@ class TelegramForwarder:
         
         print(gradient_text("All your chats are listed! Time to choose your favorites!", SUCCESS_COLOR, SUCCESS_COLOR, "🎉"))
 
-    async def forward_messages_to_channels(self, source_chat_ids, destination_channel_ids, keywords, signature):
+    async def forward_messages_to_channels(self, source_chat_topics, destination_chat_topics, keywords, signature):
         if not await self.connect_with_retry():
             return
 
         self.running = True
-        last_message_ids = {chat_id: (await self.client.get_messages(chat_id, limit=1))[0].id for chat_id in source_chat_ids}
+        last_message_ids = {chat_id: (await self.client.get_messages(chat_id, limit=1, reply_to=reply_to))[0].id for chat_id, reply_to in source_chat_topics}
 
         while self.running:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -224,8 +215,8 @@ class TelegramForwarder:
                     break
 
             try:
-                for chat_id in source_chat_ids:
-                    messages = await self.client.get_messages(chat_id, min_id=last_message_ids[chat_id], limit=None)
+                for (chat_id, reply_to), (dest_id, dest_reply_to) in zip(source_chat_topics, destination_chat_topics):
+                    messages = await self.client.get_messages(chat_id, min_id=last_message_ids[chat_id], limit=None, reply_to=reply_to)
 
                     for message in reversed(messages):
                         should_forward = False
@@ -236,16 +227,17 @@ class TelegramForwarder:
                             should_forward = True
 
                         if should_forward and not any(word.lower() in message.text.lower() for word in self.blacklist):
+                            sender_name = message.sender.first_name if message.sender else "Unknown"
                             if message.text:
-                                for dest_id in destination_channel_ids:
-                                    await self.client.send_message(dest_id, message.message + f"\n\n**{signature}**")
+                                await self.client.send_message(dest_id, f"From: **{sender_name}**\n\n{message.message}\n\n{signature}", reply_to=dest_reply_to)
                             if message.media:
                                 # Download the media
                                 media_path = await self.client.download_media(message.media)
-                                for dest_id in destination_channel_ids:
-                                    # Re-upload the media with a new message
-                                    await self.client.send_file(dest_id, media_path, caption=f"{message.text}\n\n**{signature}**" if message.text else f"**{signature}**")
-                        
+                                # Re-upload the media with a new message
+                                await self.client.send_file(dest_id, media_path, caption=f"From: **{sender_name}**\n\n{message.text}\n\n{signature}" if message.text else f"From sender: **{sender_name}**\n\n{signature}", reply_to=dest_reply_to)
+                                # Delete the media file after forwarding
+                                os.remove(media_path)
+
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         print(gradient_text(f"[{timestamp}] Message forwarded with your signature!", SUCCESS_COLOR, SUCCESS_COLOR, "✅"))
 
@@ -491,18 +483,18 @@ Welcome to the Soluify Telegram Copy & Paste Bot!
                         profile_idx = int(input(gradient_text("Enter the profile number: ", PROMPT_COLOR_START, PROMPT_COLOR_END))) - 1
                         profile_name = list(profiles.keys())[profile_idx]
                         config = profiles[profile_name]
-                        source_chat_ids = config['source_chat_ids']
-                        destination_channel_ids = config['destination_channel_ids']
+                        source_chat_topics = config['source_chat_topics']
+                        destination_chat_topics = config['destination_chat_topics']
                         keywords = config['keywords']
                         signature = config['signature']
                         blacklist = config['blacklist']
                     else:
-                        source_chat_ids, destination_channel_ids, keywords, signature, blacklist = get_new_config()
+                        source_chat_topics, destination_chat_topics, keywords, signature, blacklist = get_new_config()
                 else:
-                    source_chat_ids, destination_channel_ids, keywords, signature, blacklist = get_new_config()
+                    source_chat_topics, destination_chat_topics, keywords, signature, blacklist = get_new_config()
                 
                 await animated_transition("Preparing the message wormhole")
-                await forwarder.forward_messages_to_channels(source_chat_ids, destination_channel_ids, keywords, signature)
+                await forwarder.forward_messages_to_channels(source_chat_topics, destination_chat_topics, keywords, signature)
             elif choice == "3":
                 profiles = load_profiles()
                 if profiles:
@@ -529,8 +521,14 @@ Welcome to the Soluify Telegram Copy & Paste Bot!
 def get_new_config():
     source_chat_ids = input(gradient_text("Enter the source chat IDs (comma separated): ", PROMPT_COLOR_START, PROMPT_COLOR_END)).split(',')
     source_chat_ids = [int(chat_id.strip()) for chat_id in source_chat_ids]
+    source_topic_ids = input(gradient_text("Enter the source topic IDs (comma separated, corresponding to the source chat IDs): ", PROMPT_COLOR_START, PROMPT_COLOR_END)).split(',')
+    source_topic_ids = [int(topic_id.strip()) for topic_id in source_topic_ids]
+    source_chat_topics = list(zip(source_chat_ids, source_topic_ids))
     destination_channel_ids = input(gradient_text("Enter the destination chat IDs (comma separated): ", PROMPT_COLOR_START, PROMPT_COLOR_END)).split(',')
     destination_channel_ids = [int(chat_id.strip()) for chat_id in destination_channel_ids]
+    destination_topic_ids = input(gradient_text("Enter the destination topic IDs (comma separated, corresponding to the destination chat IDs): ", PROMPT_COLOR_START, PROMPT_COLOR_END)).split(',')
+    destination_topic_ids = [int(topic_id.strip()) for topic_id in destination_topic_ids]
+    destination_chat_topics = list(zip(destination_channel_ids, destination_topic_ids))
     keywords = input(gradient_text("Enter keywords to filter messages (optional). Leave blank to forward all messages: ", PROMPT_COLOR_START, PROMPT_COLOR_END)).split(',')
     keywords = [keyword.strip() for keyword in keywords if keyword.strip()]
     signature = input(gradient_text("Enter the signature to append to each message: ", PROMPT_COLOR_START, PROMPT_COLOR_END))
@@ -540,13 +538,13 @@ def get_new_config():
     if save_choice.lower() == 'y':
         profile_name = input(gradient_text("Enter a name for this profile: ", PROMPT_COLOR_START, PROMPT_COLOR_END))
         save_profile(profile_name, {
-            'source_chat_ids': source_chat_ids,
-            'destination_channel_ids': destination_channel_ids,
+            'source_chat_topics': source_chat_topics,
+            'destination_chat_topics': destination_chat_topics,
             'keywords': keywords,
             'signature': signature,
             'blacklist': blacklist
         })
-    return source_chat_ids, destination_channel_ids, keywords, signature, blacklist
+    return source_chat_topics, destination_chat_topics, keywords, signature, blacklist
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
